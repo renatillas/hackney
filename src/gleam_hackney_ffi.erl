@@ -12,14 +12,14 @@ send(Method, Url, Headers, Body) ->
             {ok, {response, Status, ResponseHeaders, <<>>}};
 
         {error, Error} -> 
-            {error, {other, inspect(Error)}}
+            {error, {other, Error}}
     end.
 
 h2_open(Url, Headers, Http2Options) ->
     Options = [{protocols, [http2]} | tls_options(Http2Options)],
     case hackney:h2_open(Url, Headers, Options) of
         {ok, Stream} -> {ok, Stream};
-        {error, Error} -> {error, {other, inspect(Error)}}
+        {error, Error} -> {error, {other, Error}}
     end.
 
 tls_options({http2_options, verify_peer}) ->
@@ -35,13 +35,13 @@ tls_options({http2_options, verify_none}) ->
 h2_send(Stream, Data) ->
     case hackney:h2_send(Stream, Data) of
         ok -> {ok, nil};
-        {error, Error} -> {error, {other, inspect(Error)}}
+        {error, Error} -> {error, {other, Error}}
     end.
 
 h2_send_fin(Stream, Data) ->
     case hackney:h2_send(Stream, Data, fin) of
         ok -> {ok, nil};
-        {error, Error} -> {error, {other, inspect(Error)}}
+        {error, Error} -> {error, {other, Error}}
     end.
 
 h2_recv(Stream, Timeout) ->
@@ -55,12 +55,10 @@ h2_recv(Stream, Timeout) ->
         {ok, done} ->
             {ok, http2_done};
         {error, Error} ->
-            {error, {other, inspect(Error)}}
+            {error, {other, Error}}
     end.
 
 h2_close(Stream) ->
     ok = hackney:h2_close(Stream),
     nil.
 
-inspect(Value) ->
-    unicode:characters_to_binary(io_lib:format("~p", [Value])).
