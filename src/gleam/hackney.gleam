@@ -1,6 +1,6 @@
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
-import gleam/dynamic
+import gleam/dynamic.{type Dynamic}
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
@@ -12,7 +12,7 @@ import gleam/uri
 pub type Error {
   InvalidUtf8Response
   // TODO: refine error type
-  Other(dynamic.Dynamic)
+  Other(Dynamic)
 }
 
 pub type Http2Stream
