@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0 - 2026-06-22
+
+- Added support to http 2.0
+
 ## v1.4.0 - 2026-05-26
 
 - Updated to use hackney 4.x
