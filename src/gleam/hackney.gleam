@@ -15,51 +15,77 @@ pub type Error {
   Other(Dynamic)
 }
 
-pub type Http2Stream
+pub type HttpStream
 
-pub type Http2Message {
-  Http2Response(status: Int, headers: List(http.Header))
-  Http2Data(data: BitArray)
-  Http2Trailers(headers: List(http.Header))
-  Http2Done
+pub type HttpStreamMessage {
+  HttpStreamData(data: BitArray)
+  HttpStreamDone
 }
 
-pub opaque type Http2Options {
-  Http2Options(tls: TlsOptions)
+pub opaque type Configuration {
+  Builder(
+    // Timeout for the request in milliseconds
+    timeout: Int,
+    // Wheter to verify the TLS certificate of the server.
+    verify_tls: VerifyTls,
+  )
 }
 
-pub type TlsOptions {
+pub opaque type VerifyTls {
+  TlsVerifyPeer
+  TlsVerifyNone
+  TlsCaCertificate(file: String)
+}
+
+type ErlHttpOption {
+  SslOptions(List(ErlSslOption))
+  RecvTimeout(Int)
+}
+
+type ErlSslOption {
+  Verify(ErlVerifyOption)
+  Cacertfile(String)
+}
+
+type ErlVerifyOption {
   VerifyPeer
-  VerifyPeerWithCertificateAuthorityFile(certificate_authority_file: String)
   VerifyNone
 }
 
 @external(erlang, "gleam_hackney_ffi", "send")
 fn ffi_send(
   method: String,
-  b: String,
-  c: List(http.Header),
-  d: BytesTree,
-) -> Result(Response(BitArray), Error)
-
-@external(erlang, "gleam_hackney_ffi", "h2_open")
-fn ffi_h2_open(
   url: String,
   headers: List(http.Header),
-  options: Http2Options,
-) -> Result(Http2Stream, Error)
+  body: BytesTree,
+) -> Result(Response(BitArray), Error)
 
-@external(erlang, "gleam_hackney_ffi", "h2_send")
-fn ffi_h2_send(stream: Http2Stream, data: BitArray) -> Result(Nil, Error)
+@external(erlang, "gleam_hackney_ffi", "send_with_options")
+fn ffi_send_with_options(
+  method: String,
+  url: String,
+  headers: List(http.Header),
+  body: BytesTree,
+  options: List(ErlHttpOption),
+) -> Result(Response(BitArray), Error)
 
-@external(erlang, "gleam_hackney_ffi", "h2_send_fin")
-fn ffi_h2_send_fin(stream: Http2Stream, data: BitArray) -> Result(Nil, Error)
+@external(erlang, "gleam_hackney_ffi", "open_stream")
+fn ffi_open_stream(
+  method: String,
+  url: String,
+  headers: List(http.Header),
+  body: BytesTree,
+  options: List(ErlHttpOption),
+) -> Result(Response(HttpStream), Error)
 
-@external(erlang, "gleam_hackney_ffi", "h2_recv")
-fn ffi_h2_recv(stream: Http2Stream, timeout: Int) -> Result(Http2Message, Error)
+@external(erlang, "gleam_hackney_ffi", "stream_receive")
+fn ffi_stream_receive(
+  stream: HttpStream,
+  timeout: Int,
+) -> Result(HttpStreamMessage, Error)
 
-@external(erlang, "gleam_hackney_ffi", "h2_close")
-fn ffi_h2_close(stream: Http2Stream) -> Nil
+@external(erlang, "gleam_hackney_ffi", "stream_close")
+fn ffi_stream_close(stream: HttpStream) -> Nil
 
 // TODO: test
 pub fn send_bits(
@@ -76,6 +102,74 @@ pub fn send_bits(
   Ok(Response(..response, headers: headers))
 }
 
+pub fn configure() -> Configuration {
+  Builder(timeout: 30_000, verify_tls: TlsVerifyPeer)
+}
+
+pub fn timeout(config: Configuration, timeout: Int) -> Configuration {
+  Builder(..config, timeout:)
+}
+
+pub fn verify_none(config: Configuration) {
+  Builder(..config, verify_tls: TlsVerifyNone)
+}
+
+pub fn verify_ca_certificate_file(config: Configuration, file: String) {
+  Builder(..config, verify_tls: TlsCaCertificate(file:))
+}
+
+pub fn dispatch_bits(
+  config: Configuration,
+  request: Request(BytesTree),
+) -> Result(Response(BitArray), Error) {
+  let method = http.method_to_string(request.method)
+  let erl_http_options = configuration_to_erl_options(config)
+
+  use response <- result.try(
+    request
+    |> request.to_uri
+    |> uri.to_string
+    |> ffi_send_with_options(
+      method,
+      _,
+      request.headers,
+      request.body,
+      erl_http_options,
+    ),
+  )
+  let headers = list.map(response.headers, normalise_header)
+  Ok(Response(..response, headers: headers))
+}
+
+fn configuration_to_erl_options(config: Configuration) -> List(ErlHttpOption) {
+  let Builder(verify_tls:, timeout:) = config
+
+  let erl_http_options = [RecvTimeout(timeout)]
+
+  case verify_tls {
+    TlsVerifyPeer -> erl_http_options
+    TlsVerifyNone -> [SslOptions([Verify(VerifyNone)]), ..erl_http_options]
+    TlsCaCertificate(cacertfile) -> [
+      SslOptions([Verify(VerifyPeer), Cacertfile(cacertfile)]),
+      ..erl_http_options
+    ]
+  }
+}
+
+pub fn dispatch(
+  config: Configuration,
+  request: Request(String),
+) -> Result(Response(String), Error) {
+  let request = request.map(request, bytes_tree.from_string)
+
+  use received_response <- result.try(dispatch_bits(config, request))
+
+  case bit_array.to_string(received_response.body) {
+    Ok(body) -> Ok(response.set_body(received_response, body))
+    Error(_) -> Error(InvalidUtf8Response)
+  }
+}
+
 pub fn send(req: Request(String)) -> Result(Response(String), Error) {
   use resp <- result.try(
     req
@@ -89,65 +183,37 @@ pub fn send(req: Request(String)) -> Result(Response(String), Error) {
   }
 }
 
-pub fn open_http2_stream(
+pub fn open_stream(
+  config: Configuration,
   request: Request(BytesTree),
-  options: Http2Options,
-) -> Result(Http2Stream, Error) {
-  request
-  |> request.to_uri
-  |> uri.to_string
-  |> ffi_h2_open(request.headers, options)
+) -> Result(Response(HttpStream), Error) {
+  let method = http.method_to_string(request.method)
+  let erl_http_options = configuration_to_erl_options(config)
+  use response <- result.map(
+    request
+    |> request.to_uri
+    |> uri.to_string
+    |> ffi_open_stream(
+      method,
+      _,
+      request.headers,
+      request.body,
+      erl_http_options,
+    ),
+  )
+  let headers = list.map(response.headers, normalise_header)
+  Response(..response, headers: headers)
 }
 
-pub fn default_http2_options() -> Http2Options {
-  Http2Options(tls: VerifyPeer)
-}
-
-pub fn verify_peer(_options: Http2Options) -> Http2Options {
-  Http2Options(tls: VerifyPeer)
-}
-
-pub fn verify_peer_with_certificate_authority_file(
-  _options: Http2Options,
-  certificate_authority_file: String,
-) -> Http2Options {
-  Http2Options(tls: VerifyPeerWithCertificateAuthorityFile(
-    certificate_authority_file:,
-  ))
-}
-
-pub fn verify_none(_options: Http2Options) -> Http2Options {
-  Http2Options(tls: VerifyNone)
-}
-
-pub fn send_http2(stream: Http2Stream, data: BitArray) -> Result(Nil, Error) {
-  ffi_h2_send(stream, data)
-}
-
-pub fn send_http2_fin(
-  stream: Http2Stream,
-  data: BitArray,
-) -> Result(Nil, Error) {
-  ffi_h2_send_fin(stream, data)
-}
-
-pub fn receive_http2(
-  stream: Http2Stream,
+pub fn receive_stream(
+  stream: HttpStream,
   timeout: Int,
-) -> Result(Http2Message, Error) {
-  use message <- result.try(ffi_h2_recv(stream, timeout))
-  case message {
-    Http2Response(status, headers) ->
-      Ok(Http2Response(status, list.map(headers, normalise_header)))
-    Http2Data(data) -> Ok(Http2Data(data))
-    Http2Trailers(headers) ->
-      Ok(Http2Trailers(list.map(headers, normalise_header)))
-    Http2Done -> Ok(Http2Done)
-  }
+) -> Result(HttpStreamMessage, Error) {
+  ffi_stream_receive(stream, timeout)
 }
 
-pub fn close_http2(stream: Http2Stream) -> Nil {
-  ffi_h2_close(stream)
+pub fn close_stream(stream: HttpStream) -> Nil {
+  ffi_stream_close(stream)
 }
 
 fn normalise_header(header: http.Header) -> http.Header {
