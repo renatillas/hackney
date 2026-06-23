@@ -15,12 +15,34 @@ pub type Error {
   Other(Dynamic)
 }
 
+pub opaque type ConfiguredRequest(body) {
+  ConfiguredRequest(request: Request(body), options: SendOptions)
+}
+
+pub opaque type SendOptions {
+  SendOptions(receive_timeout: ReceiveTimeout)
+}
+
+type ReceiveTimeout {
+  DefaultReceiveTimeout
+  ReceiveTimeoutMs(Int)
+}
+
 @external(erlang, "gleam_hackney_ffi", "send")
 fn ffi_send(
   method: String,
   b: String,
   c: List(http.Header),
   d: BytesTree,
+) -> Result(Response(BitArray), Error)
+
+@external(erlang, "gleam_hackney_ffi", "send_with_options")
+fn ffi_send_with_options(
+  method: String,
+  b: String,
+  c: List(http.Header),
+  d: BytesTree,
+  options: SendOptions,
 ) -> Result(Response(BitArray), Error)
 
 // TODO: test
@@ -36,6 +58,62 @@ pub fn send_bits(
   )
   let headers = list.map(response.headers, normalise_header)
   Ok(Response(..response, headers: headers))
+}
+
+pub fn configure(request: Request(body)) -> ConfiguredRequest(body) {
+  ConfiguredRequest(
+    request:,
+    options: SendOptions(receive_timeout: DefaultReceiveTimeout),
+  )
+}
+
+pub fn receive_timeout_ms(
+  configured_request: ConfiguredRequest(body),
+  timeout: Int,
+) -> ConfiguredRequest(body) {
+  ConfiguredRequest(
+    ..configured_request,
+    options: SendOptions(receive_timeout: ReceiveTimeoutMs(timeout)),
+  )
+}
+
+pub fn dispatch_bits(
+  configured_request: ConfiguredRequest(BytesTree),
+) -> Result(Response(BitArray), Error) {
+  let ConfiguredRequest(request: http_request, options:) = configured_request
+  let method = http.method_to_string(http_request.method)
+  use response <- result.try(
+    http_request
+    |> request.to_uri
+    |> uri.to_string
+    |> ffi_send_with_options(
+      method,
+      _,
+      http_request.headers,
+      http_request.body,
+      options,
+    ),
+  )
+  let headers = list.map(response.headers, normalise_header)
+  Ok(Response(..response, headers: headers))
+}
+
+pub fn dispatch(
+  configured_request: ConfiguredRequest(String),
+) -> Result(Response(String), Error) {
+  let ConfiguredRequest(request: http_request, options:) = configured_request
+  use received_response <- result.try(
+    ConfiguredRequest(
+      request: request.map(http_request, bytes_tree.from_string),
+      options:,
+    )
+    |> dispatch_bits,
+  )
+
+  case bit_array.to_string(received_response.body) {
+    Ok(body) -> Ok(response.set_body(received_response, body))
+    Error(_) -> Error(InvalidUtf8Response)
+  }
 }
 
 pub fn send(req: Request(String)) -> Result(Response(String), Error) {

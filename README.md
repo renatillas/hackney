@@ -42,3 +42,12 @@ pub fn main() {
   Ok(response)
 }
 ```
+
+Requests can also be configured before they are sent.
+
+```gleam
+request
+|> hackney.configure
+|> hackney.receive_timeout_ms(5000)
+|> hackney.dispatch
+```
