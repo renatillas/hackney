@@ -24,8 +24,10 @@ pub type HttpStreamMessage {
 
 pub opaque type Configuration {
   Builder(
-    // Timeout for the request in milliseconds
-    timeout: Int,
+    // Time in milliseconds for opening a http stream
+    connect_timeout: Int,
+    // Time in milliseconds for a request to be received
+    receive_timeout: Int,
     // Wheter to verify the TLS certificate of the server.
     verify_tls: VerifyTls,
   )
@@ -40,6 +42,7 @@ pub opaque type VerifyTls {
 type ErlHttpOption {
   SslOptions(List(ErlSslOption))
   RecvTimeout(Int)
+  ConnectTimeout(Int)
 }
 
 type ErlSslOption {
@@ -48,7 +51,6 @@ type ErlSslOption {
 }
 
 type ErlVerifyOption {
-  VerifyPeer
   VerifyNone
 }
 
@@ -103,11 +105,18 @@ pub fn send_bits(
 }
 
 pub fn configure() -> Configuration {
-  Builder(timeout: 30_000, verify_tls: TlsVerifyPeer)
+  Builder(
+    connect_timeout: 30_000,
+    verify_tls: TlsVerifyPeer,
+    receive_timeout: 30_000,
+  )
 }
 
-pub fn timeout(config: Configuration, timeout: Int) -> Configuration {
-  Builder(..config, timeout:)
+pub fn connect_timeout(
+  config: Configuration,
+  connect_timeout: Int,
+) -> Configuration {
+  Builder(..config, connect_timeout:)
 }
 
 pub fn verify_none(config: Configuration) {
@@ -142,15 +151,18 @@ pub fn dispatch_bits(
 }
 
 fn configuration_to_erl_options(config: Configuration) -> List(ErlHttpOption) {
-  let Builder(verify_tls:, timeout:) = config
+  let Builder(verify_tls:, connect_timeout:, receive_timeout:) = config
 
-  let erl_http_options = [RecvTimeout(timeout)]
+  let erl_http_options = [ConnectTimeout(connect_timeout)]
+
+  let erl_http_options = [RecvTimeout(receive_timeout), ..erl_http_options]
 
   case verify_tls {
+    // Default behaviour for hackney is to perform tls verify peer.
     TlsVerifyPeer -> erl_http_options
     TlsVerifyNone -> [SslOptions([Verify(VerifyNone)]), ..erl_http_options]
     TlsCaCertificate(cacertfile) -> [
-      SslOptions([Verify(VerifyPeer), Cacertfile(cacertfile)]),
+      SslOptions([Cacertfile(cacertfile)]),
       ..erl_http_options
     ]
   }
