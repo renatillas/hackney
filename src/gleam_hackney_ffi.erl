@@ -4,7 +4,7 @@
     send/4,
     send_with_options/5,
     open_stream/5,
-    stream_receive/2,
+    stream_receive/1,
     stream_close/1
 ]).
 
@@ -13,7 +13,8 @@ send(Method, Url, Headers, Body) ->
     send_with_options(Method, Url, Headers, Body, Options).
 
 send_with_options(Method, Url, Headers, Body, Options) ->
-    case hackney:request(Method, Url, Headers, Body, Options) of
+    NormalizedOptions = normalize_options(Options),
+    case hackney:request(Method, Url, Headers, Body, NormalizedOptions) of
         {ok, Status, ResponseHeaders, ResponseBody} -> 
             response(Status, ResponseHeaders, ResponseBody);
 
@@ -25,7 +26,8 @@ send_with_options(Method, Url, Headers, Body, Options) ->
     end.
 
 open_stream(Method, Url, Headers, Body, Options) ->
-    case hackney:request(Method, Url, Headers, stream, Options) of
+    NormalizedOptions = normalize_options(Options),
+    case hackney:request(Method, Url, Headers, stream, NormalizedOptions) of
         {ok, Status, ResponseHeaders, Stream} ->
             response(Status, ResponseHeaders, Stream);
         {ok, Stream} ->
@@ -52,11 +54,11 @@ start_stream_response(Stream) ->
         {error, Error} -> hackney_error(Error)
     end.
 
-stream_receive(Stream, Timeout) ->
-    _ = Timeout,
+stream_receive(Stream) ->
     case hackney:stream_body(Stream) of
         {ok, Data} -> {ok, {http_stream_data, Data}};
         done -> {ok, http_stream_done};
+        {error, closed} -> {ok, http_stream_done};
         {error, Error} -> hackney_error(Error)
     end.
 
@@ -65,6 +67,17 @@ response(Status, Headers, Body) ->
 
 hackney_error(Error) ->
     {error, {other, Error}}.
+
+normalize_options(Options) ->
+    [normalize_option(Elem) || Elem <:- Options].
+
+normalize_option({recv_timeout, {receive_timeout, Timeout}}) ->
+    {recv_timeout, Timeout};
+normalize_option({recv_timeout, infinity}) ->
+    {recv_timeout, infinity};
+normalize_option(Option) ->
+    Option.
+
 
 stream_close(Stream) ->
     ok = hackney:close(Stream),

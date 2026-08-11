@@ -26,11 +26,18 @@ pub opaque type Configuration {
   Builder(
     // Time in milliseconds for opening a http stream
     connect_timeout: Int,
-    // Time in milliseconds for a request to be received
-    receive_timeout: Int,
+    // Time for response data to be received.
+    receive_timeout: ReceiveTimeout,
     // Wheter to verify the TLS certificate of the server.
     verify_tls: VerifyTls,
+    // Wheter to use connection pooling or not
+    connection_pooling: Bool,
   )
+}
+
+type ReceiveTimeout {
+  ReceiveTimeout(Int)
+  Infinity
 }
 
 pub opaque type VerifyTls {
@@ -41,8 +48,9 @@ pub opaque type VerifyTls {
 
 type ErlHttpOption {
   SslOptions(List(ErlSslOption))
-  RecvTimeout(Int)
+  RecvTimeout(ReceiveTimeout)
   ConnectTimeout(Int)
+  Pool(Bool)
 }
 
 type ErlSslOption {
@@ -81,10 +89,7 @@ fn ffi_open_stream(
 ) -> Result(Response(HttpStream), Error)
 
 @external(erlang, "gleam_hackney_ffi", "stream_receive")
-fn ffi_stream_receive(
-  stream: HttpStream,
-  timeout: Int,
-) -> Result(HttpStreamMessage, Error)
+fn ffi_stream_receive(stream: HttpStream) -> Result(HttpStreamMessage, Error)
 
 @external(erlang, "gleam_hackney_ffi", "stream_close")
 fn ffi_stream_close(stream: HttpStream) -> Nil
@@ -106,9 +111,10 @@ pub fn send_bits(
 
 pub fn configure() -> Configuration {
   Builder(
-    connect_timeout: 30_000,
+    connect_timeout: 8000,
     verify_tls: TlsVerifyPeer,
-    receive_timeout: 30_000,
+    receive_timeout: ReceiveTimeout(5000),
+    connection_pooling: True,
   )
 }
 
@@ -119,12 +125,27 @@ pub fn connect_timeout(
   Builder(..config, connect_timeout:)
 }
 
+pub fn receive_timeout(
+  config: Configuration,
+  receive_timeout: Int,
+) -> Configuration {
+  Builder(..config, receive_timeout: ReceiveTimeout(receive_timeout))
+}
+
+pub fn receive_forever(config: Configuration) -> Configuration {
+  Builder(..config, receive_timeout: Infinity)
+}
+
 pub fn verify_none(config: Configuration) {
   Builder(..config, verify_tls: TlsVerifyNone)
 }
 
 pub fn verify_ca_certificate_file(config: Configuration, file: String) {
   Builder(..config, verify_tls: TlsCaCertificate(file:))
+}
+
+pub fn pooling(config: Configuration, enabled: Bool) {
+  Builder(..config, connection_pooling: enabled)
 }
 
 pub fn dispatch_bits(
@@ -151,11 +172,22 @@ pub fn dispatch_bits(
 }
 
 fn configuration_to_erl_options(config: Configuration) -> List(ErlHttpOption) {
-  let Builder(verify_tls:, connect_timeout:, receive_timeout:) = config
+  let Builder(
+    verify_tls:,
+    connect_timeout:,
+    receive_timeout:,
+    connection_pooling:,
+  ) = config
 
-  let erl_http_options = [ConnectTimeout(connect_timeout)]
+  let erl_http_options = [
+    ConnectTimeout(connect_timeout),
+    RecvTimeout(receive_timeout),
+  ]
 
-  let erl_http_options = [RecvTimeout(receive_timeout), ..erl_http_options]
+  let erl_http_options = case connection_pooling {
+    True -> erl_http_options
+    False -> [Pool(False), ..erl_http_options]
+  }
 
   case verify_tls {
     // Default behaviour for hackney is to perform tls verify peer.
@@ -217,11 +249,8 @@ pub fn open_stream(
   Response(..response, headers: headers)
 }
 
-pub fn receive_stream(
-  stream: HttpStream,
-  timeout: Int,
-) -> Result(HttpStreamMessage, Error) {
-  ffi_stream_receive(stream, timeout)
+pub fn receive_stream(stream: HttpStream) -> Result(HttpStreamMessage, Error) {
+  ffi_stream_receive(stream)
 }
 
 pub fn close_stream(stream: HttpStream) -> Nil {

@@ -47,7 +47,7 @@ pub fn configured_request_test() {
 
   let assert Ok(resp) =
     hackney.configure()
-    |> hackney.timeout(5000)
+    |> hackney.receive_timeout(5000)
     |> hackney.dispatch(req)
 
   let assert 200 = resp.status
