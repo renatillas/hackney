@@ -2,7 +2,7 @@
 
 ## v1.5.0 - 2026-08-11
 
-- Add configure, receive_timeout_ms, dispatch, and dispatch_bits.
+- Add configure, receive_timeout_ms, receive_forever, dispatch, and dispatch_bits.
 
 ## v1.4.0 - 2026-05-26
 
