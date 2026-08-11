@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.0 - 2026-08-11
+
+- Add configure, receive_timeout_ms, dispatch, and dispatch_bits.
+
 ## v1.4.0 - 2026-05-26
 
 - Updated to use hackney 4.x
