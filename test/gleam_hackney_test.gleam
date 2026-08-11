@@ -37,7 +37,7 @@ pub fn other_method_request_test() {
   let assert "{\"message\":\"Hello World\"}" = resp.body
 }
 
-pub fn configured_request_test() {
+pub fn configured_timeout_request_test() {
   let req =
     request.new()
     |> request.set_method(Get)
@@ -46,10 +46,27 @@ pub fn configured_request_test() {
     |> request.prepend_header("accept", "application/vnd.hmrc.1.0+json")
 
   let assert Ok(resp) =
-    req
-    |> hackney.configure
-    |> hackney.receive_timeout_ms(5000)
-    |> hackney.dispatch
+    hackney.configure()
+    |> hackney.receive_timeout(5000)
+    |> hackney.dispatch(req)
+
+  let assert 200 = resp.status
+  let assert Ok("application/json") = response.get_header(resp, "content-type")
+  let assert "{\"message\":\"Hello World\"}" = resp.body
+}
+
+pub fn configured_receive_forever_request_test() {
+  let req =
+    request.new()
+    |> request.set_method(Get)
+    |> request.set_host("test-api.service.hmrc.gov.uk")
+    |> request.set_path("/hello/world")
+    |> request.prepend_header("accept", "application/vnd.hmrc.1.0+json")
+
+  let assert Ok(resp) =
+    hackney.configure()
+    |> hackney.receive_forever
+    |> hackney.dispatch(req)
 
   let assert 200 = resp.status
   let assert Ok("application/json") = response.get_header(resp, "content-type")
